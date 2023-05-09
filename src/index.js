@@ -21,10 +21,20 @@ class Slack extends EventEmitter {
    * @param {Function} callback - The Lambda callback
    */
   handler(event, context, callback) {     
+    this.callbackFn = callback;
     switch(event.method) {
       case "GET": this.oauth(event, context, callback); break;
       case "POST": this.event(event, context, callback); break;
     }
+  }
+
+  /**
+   * Allow event handlers to use the callback early
+   *
+   * @param {Object} response A response object or string
+   */
+   callback(response) {
+    if (this.callbackFn) this.callbackFn(null, JSON.stringify(response));
   }
 
 
@@ -86,15 +96,19 @@ class Slack extends EventEmitter {
       return context.fail("[401] Unauthorized");
 
     // Events API challenge
-    if (payload.challenge)
+    if (payload.challenge) {
       return callback(null, payload.challenge);
-    else
-      callback();
+    } else if(payload.type === "block_suggestion") {
+      return this.store.get(id).then(this.notify.bind(this, payload, null, {callback}));
+    } else {
+      callback()
+    }
 
     // Ignore Bot Messages
     if (!this.ignoreBots || !(payload.event || payload).bot_id) {
+      console.log('Load Auth And Trigger Events')
       // Load Auth And Trigger Events
-      this.store.get(id).then(this.notify.bind(this, payload));
+      this.store.get(id).then(this.notify.bind(this, payload, null, {callback}));
     }
   }
 
@@ -104,7 +118,7 @@ class Slack extends EventEmitter {
    * @param {Object} payload - The Lambda event
    * @param {Object} auth - The Slack authentication
    */
-  notify(payload, auth) {
+  notify(payload, auth, {callback}) {
     let events = ['*'];
     let bot = new Client(auth, payload);
 
@@ -124,7 +138,7 @@ class Slack extends EventEmitter {
     if (payload.callback_id) events.push(payload.callback_id);
 
     // trigger all events
-    events.forEach(name => this.emit(name, payload, bot, this.store));
+    events.forEach(name => this.emit(name, payload, bot, callback, this.store));
   }
 
 }
